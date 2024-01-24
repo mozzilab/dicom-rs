@@ -1051,7 +1051,14 @@ impl DecodedPixelData<'_> {
         T: Send + Sync,
         T: Copy,
     {
-        self.convert_pixel_slice(&self.data[..], options)
+        let actual_length = self.data().len() as u32;
+        let expected_length = self.rows() * self.columns();
+        let padded_expected_length = expected_length + expected_length % 2;
+        let stop_index = match actual_length == padded_expected_length {
+            true => expected_length,
+            false => actual_length
+        };
+        self.convert_pixel_slice(&self.data[..stop_index as usize], options)
     }
 
     /// Convert the decoded pixel data of a frame
