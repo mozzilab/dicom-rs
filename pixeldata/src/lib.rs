@@ -138,7 +138,9 @@ pub mod encapsulation;
 pub(crate) mod transform;
 
 // re-exports
-pub use attribute::{PhotometricInterpretation, PixelRepresentation, PlanarConfiguration};
+pub use attribute::{
+    PhotometricInterpretation, PixelRepresentation, PlanarConfiguration, VoiLutSequence,
+};
 pub use lut::{CreateLutError, Lut};
 pub use transcode::{Error as TranscodeError, Result as TranscodeResult, Transcode};
 pub use transform::{Rescale, VoiLutFunction, WindowLevel, WindowLevelTransform};
@@ -413,6 +415,7 @@ pub struct DecodedPixelData<'a> {
     /// the window level specified via width and center
     window: Option<WindowLevel>,
     // TODO(#232): VOI LUT sequence is currently not supported
+    voi_lut_sequence: Option<VoiLutSequence>,
 }
 
 impl DecodedPixelData<'_> {
@@ -833,13 +836,26 @@ impl DecodedPixelData<'_> {
                             }
                             (VoiLutOption::Default | VoiLutOption::First, None) => {
                                 tracing::warn!("Could not find window level for object");
-                                Lut::new_rescale_and_normalize(
-                                    8,
-                                    signed,
-                                    rescale,
-                                    data.iter().copied(),
-                                )
-                                .context(CreateLutSnafu)?
+                                let voi_lut_sequence = self.voi_lut_sequence.clone();
+
+                                if voi_lut_sequence.is_some() {
+                                    let voi_lut_sequence = voi_lut_sequence.unwrap();
+                                    Lut::new_lut_sequence(
+                                        self.bits_stored,
+                                        signed,
+                                        voi_lut_sequence.first_mapped_value,
+                                        voi_lut_sequence.lut_data.clone(),
+                                    )
+                                    .context(CreateLutSnafu)?
+                                } else {
+                                    Lut::new_rescale_and_normalize(
+                                        8,
+                                        signed,
+                                        rescale,
+                                        data.iter().copied(),
+                                    )
+                                    .context(CreateLutSnafu)?
+                                }
                             }
                             (VoiLutOption::Custom(window), _) => Lut::new_rescale_and_window(
                                 8,
@@ -947,12 +963,24 @@ impl DecodedPixelData<'_> {
                             (VoiLutOption::Default | VoiLutOption::First, None) => {
                                 tracing::warn!("Could not find window level for object");
 
-                                Lut::new_rescale_and_normalize(
-                                    self.bits_stored,
-                                    signed,
-                                    rescale,
-                                    samples.iter().copied(),
-                                )
+                                let voi_lut_sequence = self.voi_lut_sequence.clone();
+
+                                if voi_lut_sequence.is_some() {
+                                    let voi_lut_sequence = voi_lut_sequence.unwrap();
+                                    Lut::new_lut_sequence(
+                                        self.bits_stored,
+                                        signed,
+                                        voi_lut_sequence.first_mapped_value,
+                                        voi_lut_sequence.lut_data.clone(),
+                                    )
+                                } else {
+                                    Lut::new_rescale_and_normalize(
+                                        self.bits_stored,
+                                        signed,
+                                        rescale,
+                                        samples.iter().copied(),
+                                    )
+                                }
                             }
                             (VoiLutOption::Custom(window), _) => Lut::new_rescale_and_window(
                                 self.bits_stored,
@@ -1056,7 +1084,7 @@ impl DecodedPixelData<'_> {
         let padded_expected_length = expected_length + expected_length % 2;
         let stop_index = match actual_length == padded_expected_length {
             true => expected_length,
-            false => actual_length
+            false => actual_length,
         };
         self.convert_pixel_slice(&self.data[..stop_index as usize], options)
     }
@@ -1190,7 +1218,18 @@ impl DecodedPixelData<'_> {
                             ),
                             (VoiLutOption::First, None) => {
                                 tracing::warn!("Could not find window level for object");
-                                Lut::new_rescale(8, signed, rescale)
+                                let voi_lut_sequence = self.voi_lut_sequence.clone();
+                                if voi_lut_sequence.is_some() {
+                                    let voi_lut_sequence = voi_lut_sequence.unwrap();
+                                    Lut::new_lut_sequence(
+                                        self.bits_stored,
+                                        signed,
+                                        voi_lut_sequence.first_mapped_value,
+                                        voi_lut_sequence.lut_data.clone(),
+                                    )
+                                } else {
+                                    Lut::new_rescale(8, signed, rescale)
+                                }
                             }
                             (VoiLutOption::Custom(window), _) => Lut::new_rescale_and_window(
                                 8,
@@ -1265,12 +1304,23 @@ impl DecodedPixelData<'_> {
                             ),
                             (VoiLutOption::First, None) => {
                                 tracing::warn!("Could not find window level for object");
-                                Lut::new_rescale_and_normalize(
-                                    self.bits_stored,
-                                    signed,
-                                    rescale,
-                                    samples.iter().copied(),
-                                )
+                                let voi_lut_sequence = self.voi_lut_sequence.clone();
+                                if voi_lut_sequence.is_some() {
+                                    let voi_lut_sequence = voi_lut_sequence.unwrap();
+                                    Lut::new_lut_sequence(
+                                        self.bits_stored,
+                                        signed,
+                                        voi_lut_sequence.first_mapped_value,
+                                        voi_lut_sequence.lut_data.clone(),
+                                    )
+                                } else {
+                                    Lut::new_rescale_and_normalize(
+                                        self.bits_stored,
+                                        signed,
+                                        rescale,
+                                        samples.iter().copied(),
+                                    )
+                                }
                             }
                             (VoiLutOption::Custom(window), _) => Lut::new_rescale_and_window(
                                 self.bits_stored,
@@ -1522,6 +1572,14 @@ impl DecodedPixelData<'_> {
     /// }
     /// ```
     pub fn to_owned(&self) -> DecodedPixelData<'static> {
+        let voi_lut_sequence = self
+            .voi_lut_sequence
+            .as_ref()
+            .map(|voi_lut| VoiLutSequence {
+                signed: voi_lut.signed,
+                first_mapped_value: voi_lut.first_mapped_value,
+                lut_data: voi_lut.lut_data.clone(),
+            });
         DecodedPixelData {
             data: Cow::Owned(self.data.to_vec()),
             bits_allocated: self.bits_allocated,
@@ -1538,6 +1596,7 @@ impl DecodedPixelData<'_> {
             rescale_slope: self.rescale_slope,
             voi_lut_function: self.voi_lut_function,
             window: self.window,
+            voi_lut_sequence,
         }
     }
 }
@@ -1656,7 +1715,7 @@ pub trait PixelDecoder {
     /// When calling single frame retrieval methods afterwards,
     /// such as [`to_vec_frame`](DecodedPixelData::to_vec_frame),
     /// assume the intended frame number to be `0`.
-    /// 
+    ///
     /// ---
     ///
     /// The default implementation decodes the full pixel data
@@ -1709,6 +1768,7 @@ pub(crate) struct ImagingProperties {
     pub(crate) number_of_frames: u32,
     pub(crate) voi_lut_function: Option<VoiLutFunction>,
     pub(crate) window: Option<WindowLevel>,
+    pub(crate) voi_lut_sequence: Option<VoiLutSequence>,
 }
 
 #[cfg(not(feature = "gdcm"))]
@@ -1736,6 +1796,7 @@ impl ImagingProperties {
         let number_of_frames = number_of_frames(obj)?;
         let voi_lut_function = voi_lut_function(obj)?;
         let voi_lut_function = voi_lut_function.and_then(|v| VoiLutFunction::try_from(&*v).ok());
+        let voi_lut_sequence = voi_lut_sequence(obj)?;
 
         let window = if let Some(window_center) = window_center(obj)? {
             let window_width = window_width(obj)?;
@@ -1763,6 +1824,7 @@ impl ImagingProperties {
             number_of_frames,
             voi_lut_function,
             window,
+            voi_lut_sequence,
         })
     }
 }
@@ -1790,6 +1852,7 @@ where
             number_of_frames,
             voi_lut_function,
             window,
+            voi_lut_sequence,
         } = ImagingProperties::from_obj(self).context(GetAttributeSnafu)?;
 
         let transfer_syntax = &self.meta().transfer_syntax;
@@ -1837,6 +1900,7 @@ where
                 rescale_slope,
                 voi_lut_function,
                 window,
+                voi_lut_sequence,
             });
         }
 
@@ -1869,6 +1933,7 @@ where
             rescale_slope,
             voi_lut_function,
             window,
+            voi_lut_sequence,
         })
     }
 
@@ -1890,6 +1955,7 @@ where
             number_of_frames,
             voi_lut_function,
             window,
+            voi_lut_sequence,
         } = ImagingProperties::from_obj(self).context(GetAttributeSnafu)?;
 
         let transfer_syntax = &self.meta().transfer_syntax;
@@ -1937,6 +2003,7 @@ where
                 rescale_slope,
                 voi_lut_function,
                 window,
+                voi_lut_sequence,
             });
         }
 
@@ -1980,6 +2047,7 @@ where
             rescale_slope,
             voi_lut_function,
             window,
+            voi_lut_sequence,
         })
     }
 }
@@ -2451,10 +2519,22 @@ mod tests {
         #[cfg(feature = "image")]
         #[rstest]
         // jpeg2000 encoding
-        #[cfg_attr(any(feature = "openjp2", feature = "openjpeg-sys"), case("pydicom/emri_small_jpeg_2k_lossless.dcm", 10))]
-        #[cfg_attr(any(feature = "openjp2", feature = "openjpeg-sys"), case("pydicom/693_J2KI.dcm", 1))]
-        #[cfg_attr(any(feature = "openjp2", feature = "openjpeg-sys"), case("pydicom/693_J2KR.dcm", 1))]
-        #[cfg_attr(any(feature = "openjp2", feature = "openjpeg-sys"), case("pydicom/JPEG2000.dcm", 1))]
+        #[cfg_attr(
+            any(feature = "openjp2", feature = "openjpeg-sys"),
+            case("pydicom/emri_small_jpeg_2k_lossless.dcm", 10)
+        )]
+        #[cfg_attr(
+            any(feature = "openjp2", feature = "openjpeg-sys"),
+            case("pydicom/693_J2KI.dcm", 1)
+        )]
+        #[cfg_attr(
+            any(feature = "openjp2", feature = "openjpeg-sys"),
+            case("pydicom/693_J2KR.dcm", 1)
+        )]
+        #[cfg_attr(
+            any(feature = "openjp2", feature = "openjpeg-sys"),
+            case("pydicom/JPEG2000.dcm", 1)
+        )]
         //
         // jpeg-ls encoding not supported
         #[should_panic(expected = "UnsupportedTransferSyntax { ts: \"1.2.840.10008.1.2.4.80\"")]
@@ -2483,7 +2563,11 @@ mod tests {
             println!("Parsing pixel data for {}", test_file.display());
             let obj = open_file(test_file).unwrap();
             let pixel_data = obj.decode_pixel_data().unwrap();
-            assert_eq!(pixel_data.number_of_frames(), frames, "number of frames mismatch");
+            assert_eq!(
+                pixel_data.number_of_frames(),
+                frames,
+                "number of frames mismatch"
+            );
 
             let output_dir = Path::new(
                 "../target/dicom_test_files/_out/test_parse_jpeg_encoded_dicom_pixel_data",
@@ -2491,7 +2575,9 @@ mod tests {
             fs::create_dir_all(output_dir).unwrap();
 
             for i in 0..pixel_data.number_of_frames().min(MAX_TEST_FRAMES) {
-                let image = pixel_data.to_dynamic_image(i).expect("failed to retrieve the frame requested");
+                let image = pixel_data
+                    .to_dynamic_image(i)
+                    .expect("failed to retrieve the frame requested");
                 let image_path = output_dir.join(format!(
                     "{}-{}.png",
                     Path::new(value).file_stem().unwrap().to_str().unwrap(),
@@ -2520,9 +2606,9 @@ mod tests {
                 "../target/dicom_test_files/_out/test_decode_pixel_data_individual_frames",
             );
             std::fs::create_dir_all(output_dir).unwrap();
-    
+
             assert_eq!(pixel_data.number_of_frames(), 1, "expected 1 frame only");
-    
+
             let image = pixel_data.to_dynamic_image(0).unwrap();
             let image_path = output_dir.join(format!(
                 "{}-{}.png",
