@@ -28,6 +28,7 @@ pub enum AttributeName {
     VoiLutFunction,
     WindowCenter,
     WindowWidth,
+    VoiLutSequence,
 }
 
 impl std::fmt::Display for AttributeName {
@@ -112,6 +113,98 @@ pub fn voi_lut_function<D: DataDictionary + Clone>(
         .trim()
         .to_string();
     Ok(Some(value))
+}
+
+#[derive(Debug, Clone)]
+pub struct VoiLutSequence {
+    pub signed: bool,
+    pub first_mapped_value: u16,
+    pub lut_data: Vec<u16>,
+}
+
+/// Get the VOILUTSequence from the DICOM object
+pub fn voi_lut_sequence<D: DataDictionary + Clone>(
+    obj: &FileDicomObject<InMemDicomObject<D>>,
+) -> Result<Option<VoiLutSequence>> {
+    // This will be a sequence if it exists
+    let elem = if let Some(elem) =
+        obj.element_opt(tags::VOILUT_SEQUENCE)
+            .context(RetrieveSnafu {
+                name: AttributeName::VoiLutSequence,
+            })? {
+        elem
+    } else {
+        return Ok(None);
+    };
+
+    if let Some(voi_items_arr) = elem.items() {
+        if let Some(voi_items) = voi_items_arr.first() {
+            // LUT Descriptor (0028,3002) will be [number_of_entries, first_mapped_value, bits_per_entry]
+            // First fetch the DICOM element (which will have the VR stored)
+            if let Some(lut_description) =
+                voi_items
+                    .element_opt(Tag(0x0028, 0x3002))
+                    .context(RetrieveSnafu {
+                        name: AttributeName::VoiLutSequence,
+                    })?
+            {
+                // TODO: reconsider how to handle this
+                let signed = match lut_description.vr() {
+                    dicom_core::VR::US => false,
+                    dicom_core::VR::SS => true,
+                    _ => {
+                        return Ok(None);
+                    }
+                };
+                // Get the actual LUT descriptor array here after fetching
+                let lut_description_arr =
+                    lut_description
+                        .value()
+                        .to_multi_int::<u16>()
+                        .context(ConvertValueSnafu {
+                            name: AttributeName::VoiLutSequence,
+                        })?;
+                if lut_description_arr.len() != 3 {
+                    return Ok(None);
+                }
+                let number_of_elements = lut_description_arr[0];
+                let first_mapped_value = lut_description_arr[1];
+                let _bits_stored = lut_description_arr[2]; // TODO: we just use the bits stored for the overall image; reconsider
+
+                // The LUT Data (0028,3006)
+                if let Some(lut_data) =
+                    voi_items
+                        .element_opt(Tag(0x0028, 0x3006))
+                        .context(RetrieveSnafu {
+                            name: AttributeName::VoiLutSequence,
+                        })?
+                {
+                    if lut_data.vr() != dicom_core::VR::US {
+                        // This can also be an OW but have not verified if this has been handled properly by dicom-rs
+                        return Ok(None);
+                    }
+                    // The sign will be handled later; just cast as u16 regardless of sign
+                    let lut_data =
+                        lut_data
+                            .value()
+                            .to_multi_int::<u16>()
+                            .context(ConvertValueSnafu {
+                                name: AttributeName::VoiLutSequence,
+                            })?;
+                    if lut_data.len() != number_of_elements as usize {
+                        return Ok(None);
+                    }
+                    return Ok(Some(VoiLutSequence {
+                        signed,
+                        first_mapped_value,
+                        lut_data,
+                    }));
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 /// Get the SamplesPerPixel from the DICOM object

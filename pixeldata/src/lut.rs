@@ -281,6 +281,52 @@ where
         Self::new_with_fn(bits_stored, signed, |v| voi.apply(v, y_max))
     }
 
+    /// Applies signed correction for data according to `new_with_fn`
+    pub fn apply_signed(bits_stored: u16, signed: bool, value: f64) -> f64 {
+        let size = (1 << bits_stored as u32) as f64;
+        if signed && value >= size / 2. {
+            value - size
+        } else {
+            value
+        }
+    }
+
+    /// Apply VOILutSequence correction according to C.11.2.1.1
+    pub fn new_lut_sequence(
+        bits_stored: u16,
+        signed: bool,
+        first_mapped_value: u16,
+        lut: Vec<u16>,
+    ) -> Result<Self, CreateLutError> {
+        let bits_allocated = (bits_stored as usize).next_power_of_two();
+        let y_max = ((1 << bits_allocated) - 1) as f64;
+
+        // Values into this function have not accounted for sign yet
+        let first_mapped_value = Self::apply_signed(bits_stored, signed, first_mapped_value as f64);
+        let lut: Vec<f64> = lut
+            .iter()
+            .map(|v| Self::apply_signed(bits_stored, signed, *v as f64))
+            .collect();
+
+        // unwrap safe because we have ensure the LUT array length previously in `voi_lut_sequence`
+        let x_min = *lut.first().unwrap();
+        let x_max = *lut.last().unwrap();
+
+        Self::new_with_fn(bits_stored, signed, |v| {
+            let x = if v < first_mapped_value {
+                x_min
+            } else if v > lut.len() as f64 + first_mapped_value - 1. {
+                x_max
+            } else {
+                lut[(v - first_mapped_value) as usize]
+            };
+
+            // Normalize to 0 to `2^n - 1`
+            let y = (x - x_min) * y_max / (x_max - x_min);
+            y.floor()
+        })
+    }
+
     /// Apply the transformation to a single pixel sample value.
     ///
     /// Although the input is expected to be one of `u8`, `u16`, or `u32`,
