@@ -233,14 +233,16 @@ pub fn high_bit<D: DataDictionary + Clone>(
     obj: &FileDicomObject<InMemDicomObject<D>>,
 ) -> Result<u16> {
     if let Some(e) = obj.element(tags::HIGH_BIT).ok() {
-        return Ok(e.uint16()?);
+        if let Some(e) = e.uint16().ok() {
+            return Ok(e);
+        }
     }
     if let Some(e) = obj.element(tags::BITS_STORED).ok() {
         if let Some(e) = e.uint16().ok() {
             return Ok(e - 1);
         }
     }
-    Err("COULDNT READ HIGH BIT".into())
+    MissingRequiredSnafu{ AttributeName::HighBit }
 }
 
 /// Get the PixelData element from the DICOM object
