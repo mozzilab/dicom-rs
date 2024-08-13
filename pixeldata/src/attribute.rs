@@ -242,7 +242,7 @@ pub fn high_bit<D: DataDictionary + Clone>(
             return Ok(e - 1);
         }
     }
-    MissingRequiredSnafu{ name: AttributeName::HighBit }
+    retrieve_required_u16(obj, tags::HIGH_BIT, AttributeName::HighBit)
 }
 
 /// Get the PixelData element from the DICOM object
