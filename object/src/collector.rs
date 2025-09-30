@@ -1603,7 +1603,7 @@ mod tests {
 
         // collect the other fragments
 
-        let mut fragment = Vec::with_capacity(131_072);
+        let mut fragment = Vec::with_capacity(16_777_216);
 
         let len = collector
             .read_next_fragment(&mut fragment)
@@ -1623,7 +1623,7 @@ mod tests {
         assert_eq!(len, 65_536);
 
         // accumulates
-        assert_eq!(fragment.len(), 131_072);
+        assert_eq!(fragment.len(), 16_777_216);
 
         // inspect a few bytes
         assert_eq!(&fragment[0..4], &[0xFF, 0xD8, 0xFF, 0xC1]);

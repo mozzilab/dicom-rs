@@ -22,7 +22,7 @@ pub const MINIMUM_PDU_SIZE: u32 = 4_096;
 
 /// The maximum PDU size,
 /// as specified by the standard
-pub const MAXIMUM_PDU_SIZE: u32 = 131_072;
+pub const MAXIMUM_PDU_SIZE: u32 = 16_777_216;
 
 /// The length of the PDU header in bytes,
 /// comprising the PDU type (1 byte),
